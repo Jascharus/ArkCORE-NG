@@ -36,6 +36,17 @@
 #include "World.h"
 #include "Transport.h"
 
+bool QuaternionData::isUnit() const
+{
+    return fabs(x * x + y * y + z * z + w * w - 1.0f) < 1e-5;
+}
+
+QuaternionData QuaternionData::fromEulerAnglesZYX(float Z, float Y, float X)
+{
+    G3D::Quat quat(G3D::Matrix3::fromEulerAnglesZYX(Z, Y, X));
+    return QuaternionData(quat.x, quat.y, quat.z, quat.w);
+}
+
 GameObject::GameObject() : WorldObject(false), MapObject(),
     m_model(NULL), m_goValue(), m_AI(NULL)
 {
@@ -55,6 +66,7 @@ GameObject::GameObject() : WorldObject(false), MapObject(),
     m_goInfo = nullptr;
     m_ritualOwnerGUID = 0;
     m_goData = nullptr;
+    m_packedRotation = 0;
 
     m_DBTableGuid = 0;
     m_rotation = 0;
@@ -217,6 +229,8 @@ bool GameObject::Create(uint32 guidlow, uint32 name_id, Map* map, uint32 phaseMa
         return false;
     }
 
+    GameObjectAddon const* gameObjectAddon = sObjectMgr->GetGameObjectAddon(guidlow);
+
     SetFloatValue(GAMEOBJECT_PARENTROTATION+0, rotation0);
     SetFloatValue(GAMEOBJECT_PARENTROTATION+1, rotation1);
 
@@ -280,6 +294,13 @@ bool GameObject::Create(uint32 guidlow, uint32 name_id, Map* map, uint32 phaseMa
             SetGoAnimProgress(animprogress);
             break;
     }
+
+    if (gameObjectAddon && gameObjectAddon->InvisibilityValue)
+    {
+        m_invisibility.AddFlag(gameObjectAddon->invisibilityType);
+        m_invisibility.AddValue(gameObjectAddon->invisibilityType, gameObjectAddon->InvisibilityValue);
+    }
+
     LastUsedScriptID = GetGOInfo()->ScriptId;
     AIM_Initialize();
 
@@ -514,7 +535,6 @@ void GameObject::Update(uint32 diff)
                     }
                 }
             }
-
             break;
         }
         case GO_ACTIVATED:
@@ -1906,6 +1926,46 @@ void GameObject::UpdateRotationFields(float rotation2 /*=0.0f*/, float rotation3
     SetFloatValue(GAMEOBJECT_PARENTROTATION+3, rotation3);
 }
 
+void GameObject::UpdatePackedRotation()
+{
+    static const int32 PACK_YZ = 1 << 20;
+    static const int32 PACK_X = PACK_YZ << 1;
+
+    static const int32 PACK_YZ_MASK = (PACK_YZ << 1) - 1;
+    static const int32 PACK_X_MASK = (PACK_X << 1) - 1;
+
+    int8 w_sign = (m_worldRotation.w >= 0.f ? 1 : -1);
+    int64 x = int32(m_worldRotation.x * PACK_X)  * w_sign & PACK_X_MASK;
+    int64 y = int32(m_worldRotation.y * PACK_YZ) * w_sign & PACK_YZ_MASK;
+    int64 z = int32(m_worldRotation.z * PACK_YZ) * w_sign & PACK_YZ_MASK;
+    m_packedRotation = z | (y << 21) | (x << 42);
+}
+
+void GameObject::SetWorldRotation(float qx, float qy, float qz, float qw)
+{
+    G3D::Quat rotation(qx, qy, qz, qw);
+    rotation.unitize();
+    m_worldRotation.x = rotation.x;
+    m_worldRotation.y = rotation.y;
+    m_worldRotation.z = rotation.z;
+    m_worldRotation.w = rotation.w;
+    UpdatePackedRotation();
+}
+
+void GameObject::SetParentRotation(QuaternionData const& rotation)
+{
+    SetFloatValue(GAMEOBJECT_PARENTROTATION + 0, rotation.x);
+    SetFloatValue(GAMEOBJECT_PARENTROTATION + 1, rotation.y);
+    SetFloatValue(GAMEOBJECT_PARENTROTATION + 2, rotation.z);
+    SetFloatValue(GAMEOBJECT_PARENTROTATION + 3, rotation.w);
+}
+
+void GameObject::SetWorldRotationAngles(float z_rot, float y_rot, float x_rot)
+{
+    G3D::Quat quat(G3D::Matrix3::fromEulerAnglesZYX(z_rot, y_rot, x_rot));
+    SetWorldRotation(quat.x, quat.y, quat.z, quat.w);
+}
+
 void GameObject::ModifyHealth(int32 change, Unit* attackerOrHealer /*= NULL*/, uint32 spellId /*= 0*/)
 {
     if (!m_goValue.Building.MaxHealth || !change)
@@ -2309,20 +2369,5 @@ void GameObject::UpdateModelPosition()
         GetMap()->RemoveGameObjectModel(*m_model);
         m_model->Relocate(*this);
         GetMap()->InsertGameObjectModel(*m_model);
-    }
-}
-
-void GameObjectData::UpdatePhaseXGroup(std::set<uint16>&idList, uint16& phaseGroup)
-{
-    if (!idList.size() && !phaseGroup)
-    {
-        idList.insert(169);
-        return;
-    }
-    else if (!idList.size() == 1)
-        return; 
-    else
-    {
-
     }
 }

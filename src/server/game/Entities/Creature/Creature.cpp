@@ -2142,6 +2142,10 @@ bool Creature::LoadCreaturesAddon(bool reload)
     if (cainfo->emote != 0)
         SetUInt32Value(UNIT_NPC_EMOTESTATE, cainfo->emote);
 
+    SetAIAnimKitId(cainfo->aiAnimKit);
+    SetMovementAnimKitId(cainfo->movementAnimKit);
+    SetMeleeAnimKitId(cainfo->meleeAnimKit);
+
     //Load Path
     if (cainfo->path_id != 0)
         m_path_id = cainfo->path_id;
@@ -2528,6 +2532,26 @@ void Creature::SetPosition(float x, float y, float z, float o)
     GetMap()->CreatureRelocation(this, x, y, z, o);
     if (IsVehicle())
         GetVehicleKit()->RelocatePassengers();
+}
+
+void Creature::SetTransportHomePosition(float x, float y, float z, float o)
+{
+    m_transportHomePosition.Relocate(x, y, z, o);
+}
+
+void Creature::SetTransportHomePosition(const Position &pos)
+{
+    m_transportHomePosition.Relocate(pos);
+}
+
+void Creature::GetTransportHomePosition(float& x, float& y, float& z, float& ori) const
+{
+    m_transportHomePosition.GetPosition(x, y, z, ori);
+}
+
+Position const& Creature::GetTransportHomePosition() const
+{
+    return m_transportHomePosition; 
 }
 
 bool Creature::IsDungeonBoss() const

@@ -1344,6 +1344,7 @@ class Unit : public WorldObject
         float GetMeleeReach() const;
         bool IsWithinCombatRange(const Unit* obj, float dist2compare) const;
         bool IsWithinMeleeRange(const Unit* obj, float dist = MELEE_RANGE) const;
+        float GetMeleeRange(Unit const * target) const;
         bool IsWithinBoundaryRadius(const Unit* obj) const;
         void GetRandomContactPoint(const Unit* target, float &x, float &y, float &z, float distance2dMin, float distance2dMax) const;
         uint32 m_extraAttacks;
@@ -1456,8 +1457,11 @@ class Unit : public WorldObject
         bool IsFriendlyTo(Unit const* unit) const;
         bool IsNeutralToAll() const;
         uint32 GetFakeAttackFlag();
+        uint32 GetInitFakeAttackFlag();
         bool IsFakeAttack(Unit* victim);
         uint32 GetRangedFakeAttackSpell();
+        uint32 GetRangedAttackSpell();
+        uint32 GetRangedAttackWeapon();
         uint32 IsRangedFakeAttackPossible();
         bool IsMeleeFakeAttackPossible();
 
@@ -2364,6 +2368,10 @@ class Unit : public WorldObject
 
         uint32 _oldFactionId;           ///< faction before charm
         bool _isWalkingBeforeCharm;     ///< Are we walking before we were charmed?
+
+        uint16 _aiAnimKitId;
+        uint16 _movementAnimKitId;
+        uint16 _meleeAnimKitId;
 
         time_t _lastDamagedTime; // Part of Evade mechanics
         int32 m_SparringAttackFlag;

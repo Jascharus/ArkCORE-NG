@@ -511,6 +511,12 @@ bool Unit::IsWithinMeleeRange(const Unit* obj, float dist) const
     return distsq < maxdist * maxdist;
 }
 
+float Unit::GetMeleeRange(Unit const* target) const
+{
+    float range = GetCombatReach() + target->GetCombatReach() + 4.0f / 3.0f;
+    return std::max(range, NOMINAL_MELEE_RANGE);
+}
+
 bool Unit::IsWithinBoundaryRadius(const Unit* obj) const
 {
     if (!obj || !IsInMap(obj) || !IsInPhase(obj))
@@ -9097,13 +9103,16 @@ uint32 Unit::GetFakeAttackFlag()
         return 0;
 
     if (m_SparringAttackFlag < 0)
-    {
-        FactionTemplateEntry const* meFEntry = GetFactionTemplateEntry();
-        uint32 meFlags = meFEntry->factionFlags;
-        m_SparringAttackFlag = ((meFlags & (FACTION_TEMPLATE_ENEMY_SPARRING_1 & FACTION_TEMPLATE_ENEMY_SPARRING_2 & FACTION_TEMPLATE_ENEMY_SPARRING_4)) >> 3) & 7;
-    }
+        m_SparringAttackFlag = GetInitFakeAttackFlag();
 
     return m_SparringAttackFlag;
+}
+
+uint32 Unit::GetInitFakeAttackFlag()
+{
+    FactionTemplateEntry const* meFEntry = GetFactionTemplateEntry();
+    uint32 meFlags = meFEntry->factionFlags;
+    return((meFlags & (FACTION_TEMPLATE_ENEMY_SPARRING_1 & FACTION_TEMPLATE_ENEMY_SPARRING_2 & FACTION_TEMPLATE_ENEMY_SPARRING_4)) >> 3) & 7;
 }
 
 bool Unit::IsFakeAttack(Unit* victim)
@@ -9126,30 +9135,39 @@ uint32 Unit::GetRangedFakeAttackSpell()
     if (!GetFakeAttackFlag())
         return 0;
 
-    // check has ranged weapon equipped
+    // check has ranged weapon and/or equipped
+    uint32 weapon = GetRangedAttackWeapon();
+    if (!weapon)
+        return 0;
 
-    uint32 equippedRangedWeapon = GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + RANGED_ATTACK);
+    return GetRangedAttackSpell();
+}
 
-    if (equippedRangedWeapon)  // if not, check has ranged weapon in slot
-    {
-        int8 index = 1;
-        EquipmentInfo const* einfo = sObjectMgr->GetEquipmentInfo(GetEntry(), index);
-        uint32 possibleRangedWeapon = einfo->ItemEntry[RANGED_ATTACK];
+uint32 Unit::GetRangedAttackWeapon()
+{
+    if (uint32 equippedRangedWeapon = GetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID + RANGED_ATTACK))
+        return equippedRangedWeapon;
 
-        if (!possibleRangedWeapon)
-            return 0;
-    }
+    int8 id = 1;
+    EquipmentInfo const* einfo = sObjectMgr->GetEquipmentInfo(GetEntry(), id);
+    if (uint32 possibleRangedWeapon = einfo->ItemEntry[RANGED_ATTACK])
+        return possibleRangedWeapon;
 
-    Creature* caster = ToCreature(); // check creature_template->spells for ranged spells
-    for (uint8 i = 0; i < CREATURE_MAX_SPELLS; ++i)
-        if (caster->m_spells[i])
-        {
-            uint32 spellId = caster->m_spells[i];
-            if (SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId))
-                if (spellInfo->DmgClass == SPELL_DAMAGE_CLASS_RANGED)
-                    if (spellInfo->RangeEntry && spellInfo->RangeEntry->maxRangeHostile > 15.0f)
-                        return spellId;
-        }
+    return 0;
+}
+
+uint32 Unit::GetRangedAttackSpell()
+{
+    if (Creature* caster = ToCreature())
+        for (uint8 i = 0; i < CREATURE_MAX_SPELLS; ++i)
+            if (caster->m_spells[i])
+            {
+                uint32 spellId = caster->m_spells[i];
+                if (SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId))
+                    if (spellInfo->DmgClass == SPELL_DAMAGE_CLASS_RANGED)
+                        if (spellInfo->RangeEntry && spellInfo->RangeEntry->maxRangeHostile > 5.0f)
+                            return spellId;
+            }
 
     return 0;
 }
@@ -15564,7 +15582,7 @@ void Unit::SendDurabilityLoss(Player* receiver, uint32 percent)
 
 void Unit::PlayOneShotAnimKit(uint32 id)
 {
-    WorldPacket data(SMSG_PLAY_ONE_SHOT_ANIM_KIT, 8+1);
+    WorldPacket data(SMSG_PLAY_ONE_SHOT_ANIM_KIT, 8 + 1);
     data.appendPackGUID(GetGUID());
     data << uint16(id);
     SendMessageToSet(&data, true);
@@ -17540,6 +17558,7 @@ bool Unit::HandleSpellClick(Unit* clicker, int8 seatId)
         Unit* caster = (itr->second.castFlags & NPC_CLICK_CAST_CASTER_CLICKER) ? clicker : this;
         Unit* target = (itr->second.castFlags & NPC_CLICK_CAST_TARGET_CLICKER) ? clicker : this;
         uint64 origCasterGUID = (itr->second.castFlags & NPC_CLICK_CAST_ORIG_CASTER_OWNER) ? GetOwnerGUID() : clicker->GetGUID();
+        TriggerCastFlags const flags = GetVehicleKit() ? TRIGGERED_IGNORE_CASTER_MOUNTED_OR_ON_VEHICLE : TRIGGERED_NONE;
 
         SpellInfo const* spellEntry = sSpellMgr->GetSpellInfo(itr->second.spellId);
         // if (!spellEntry) should be checked at npc_spellclick load
@@ -17565,7 +17584,7 @@ bool Unit::HandleSpellClick(Unit* clicker, int8 seatId)
             }
 
             if (IsInMap(caster))
-                caster->CastCustomSpell(itr->second.spellId, SpellValueMod(SPELLVALUE_BASE_POINT0+i), seatId + 1, target, GetVehicleKit() ? TRIGGERED_IGNORE_CASTER_MOUNTED_OR_ON_VEHICLE : TRIGGERED_NONE, NULL, NULL, origCasterGUID);
+                caster->CastCustomSpell(itr->second.spellId, SpellValueMod(SPELLVALUE_BASE_POINT0 + i), seatId + 1, target, flags, NULL, NULL, origCasterGUID);
             else    // This can happen during Player::_LoadAuras
             {
                 int32 bp0[MAX_SPELL_EFFECTS];
@@ -17579,7 +17598,7 @@ bool Unit::HandleSpellClick(Unit* clicker, int8 seatId)
         else
         {
             if (IsInMap(caster))
-                caster->CastSpell(target, spellEntry, GetVehicleKit() ? TRIGGERED_IGNORE_CASTER_MOUNTED_OR_ON_VEHICLE : TRIGGERED_NONE, NULL, NULL, origCasterGUID);
+                caster->CastSpell(target, spellEntry, flags, NULL, NULL, origCasterGUID);
             else
                 Aura::TryRefreshStackOrCreate(spellEntry, MAX_EFFECT_MASK, this, clicker, NULL, NULL, origCasterGUID);
         }
@@ -17789,7 +17808,7 @@ void Unit::WriteMovementInfo(WorldPacket& data, Movement::ExtraMovementStatusEle
     MovementStatusElements const* sequence = GetMovementStatusElementsSequence(data.GetOpcode());
     if (!sequence)
     {
-        TC_LOG_ERROR("network", "Unit::WriteMovementInfo: No movement sequence found for opcode %s", GetOpcodeNameForLogging(data.GetOpcode()).c_str());
+        TC_LOG_DEBUG("network", "Unit::WriteMovementInfo: No movement sequence found for opcode %s", GetOpcodeNameForLogging(data.GetOpcode()).c_str());
         return;
     }
 
@@ -17995,11 +18014,23 @@ void Unit::SendTeleportPacket(Position& pos)
     // This oldPos actually contains the destination position if the Unit is a Player.
     Position oldPos = {GetPositionX(), GetPositionY(), GetPositionZMinusOffset(), GetOrientation()};
 
-    if (GetTypeId() == TYPEID_UNIT)
-        Relocate(&pos); // Relocate the unit to its new position in order to build the packets correctly.
-
     ObjectGuid guid = GetGUID();
     ObjectGuid transGuid = GetTransGUID();
+
+    if (Player* player = ToPlayer())
+    {
+        if (transGuid)
+            pos = player->GetTransportPosition();
+        else
+        {
+            float x, y, z, o;
+            pos.GetPosition(x, y, z, o);
+            if (TransportBase* transportBase = GetDirectTransport())
+                transportBase->CalculatePassengerOffset(x, y, z, &o);
+        }
+    }
+    else
+        Relocate(&pos); // Relocate the unit to its new position in order to build the packets correctly.
 
     WorldPacket data(SMSG_MOVE_UPDATE_TELEPORT, 38);
     WriteMovementInfo(data);
@@ -18032,7 +18063,7 @@ void Unit::SendTeleportPacket(Position& pos)
 
         if (transGuid)
         {
-            data2.WriteByteSeq(transGuid[6]);
+            data2.WriteByteSeq(transGuid[6]); /* WPP has her 5 6 1 7 0 2 4 3 but i see no different.*/
             data2.WriteByteSeq(transGuid[5]);
             data2.WriteByteSeq(transGuid[1]);
             data2.WriteByteSeq(transGuid[7]);
@@ -18047,22 +18078,22 @@ void Unit::SendTeleportPacket(Position& pos)
         data2.WriteByteSeq(guid[2]);
         data2.WriteByteSeq(guid[3]);
         data2.WriteByteSeq(guid[5]);
-        data2 << float(GetPositionX());
+        data2 << float(pos.GetPositionX());
         data2.WriteByteSeq(guid[4]);
-        data2 << float(GetOrientation());
+        data2 << float(pos.GetOrientation());
         data2.WriteByteSeq(guid[7]);
-        data2 << float(GetPositionZMinusOffset());
+        data2 << float(pos.GetPositionZ() /*GetPositionZMinusOffset()*/);
         data2.WriteByteSeq(guid[0]);
         data2.WriteByteSeq(guid[6]);
-        data2 << float(GetPositionY());
+        data2 << float(pos.GetPositionY());
         ToPlayer()->SendDirectMessage(&data2); // Send the MSG_MOVE_TELEPORT packet to self.
     }
 
     // Relocate the player/creature to its old position, so we can broadcast to nearby players correctly
-    if (GetTypeId() == TYPEID_PLAYER)
+   /* if (GetTypeId() == TYPEID_PLAYER)
         Relocate(&pos);
     else
-        Relocate(&oldPos);
+        Relocate(&oldPos);*/
 
     // Broadcast the packet to everyone except self.
     SendMessageToSet(&data, false);
